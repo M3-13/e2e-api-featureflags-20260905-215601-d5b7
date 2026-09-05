@@ -1,17 +1,9 @@
 VERDICT: BUGS_FOUND
 
-**Bug: TestRoutesRegistered interpretiert 404-Antworten der Flag-Handler fälschlich als fehlende Routenregistrierung**
-
-- **Titel**  
-  `TestRoutesRegistered` schlägt bei `GET /flags/foo` und `DELETE /flags/foo` fehl, weil der Test einen Status 404 als Beweis für den Catch-All-Handler wertet, obwohl die registrierten Handler bei unbekanntem Key ebenfalls 404 liefern.
-
-- **Symptom**  
-  Der Testlauf `go test ./...` bricht mit Exit-Status 1 ab. Die Untertests `flag_get` und `flag_delete` melden fälschlich, die Routen `GET /flags/{key}` bzw. `DELETE /flags/{key}` seien nicht registriert. Tatsächlich sind die Routen registriert und antworten korrekt mit 404, wenn kein Flag mit dem angegebenen Schlüssel existiert (gemäß AC-06 und AC-08). Der rote Testlauf blockiert die Abnahme, obwohl das Produktverhalten spezifikationskonform ist.
-
-- **Repro**  
-  `go test ./...` im Projektverzeichnis ausführen.
-
-- **Evidence**  
+- **Titel**: `TestRoutesRegistered` schlägt fehl, weil er 404 bei unbekanntem Flag als fehlende Route interpretiert
+- **Symptom**: `go test ./...` läuft auf Rot; die Untertests `TestRoutesRegistered/flag_get` und `TestRoutesRegistered/flag_delete` scheitern, obwohl die Handler korrekt 404 für nicht vorhandene Flags liefern (gemäß AC-06/AC-08). Dadurch ist die CI rot, ohne dass ein Produktfehler vorliegt.
+- **Repro**: `go test ./...` ausführen; die beiden Untertests schlagen fehl.
+- **Evidence**:
   ```
   --- FAIL: TestRoutesRegistered (0.00s)
       --- FAIL: TestRoutesRegistered/flag_get (0.00s)
@@ -19,9 +11,5 @@ VERDICT: BUGS_FOUND
       --- FAIL: TestRoutesRegistered/flag_delete (0.00s)
           routes_test.go:42: DELETE /flags/foo is not registered: got 404 (hit catch-all)
   ```
-
-- **Suspected file(s)**  
-  `routes_test.go`, Zeile 42. Der Test prüft `rr.Code == http.StatusNotFound` und schließt daraus auf den Catch-All-Handler. Diese Annahme ist falsch: Auch die echten Handler `handleGetFlag` (in `handlers.go`) und `handleDeleteFlag` (in `handlers.go`) liefern bei unbekanntem Key den Status 404. Die Route ist in `main.go` über `mux.HandleFunc("/flags/{key}", …)` registriert. Der Test muss entweder vor dem Request ein passendes Flag anlegen oder den Status nicht als Indikator für die Registrierung verwenden (z. B. stattdessen prüfen, dass der Handler aufgerufen wird und die Antwort JSON mit `error`-Feld ist). Es handelt sich um einen Testfehler, nicht um einen Produktfehler.
-
-- **Severity**  
-  medium (fehlgeschlagener Testlauf blockiert die CI-Abnahme; die funktionale Implementierung ist gemäß Spezifikation korrekt)
+- **Suspected file(s)**: `routes_test.go` — die Annahme in `TestRoutesRegistered`, ein 404 stamme nur vom Catch-all, trifft nicht zu, wenn die echten Handler für unbekannte Schlüssel 404 zurückgeben. Die tatsächlichen Handler `handleGetFlag` und `handleDeleteFlag` in `handlers.go` liefern für unbekannte Keys korrekt 404; der Test müsste entweder vorher ein Flag anlegen oder die 404-Antwort als legitime Handler-Antwort akzeptieren. `handlers.go` selbst ist hier nicht defekt.
+- **Severity**: medium (Build rot, aber Produktverhalten korrekt)
