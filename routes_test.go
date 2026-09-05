@@ -9,12 +9,6 @@ import (
 )
 
 func TestRoutesRegistered(t *testing.T) {
-	api := NewAPI()
-
-	if err := api.store.Put(Flag{Key: "foo", Enabled: true}); err != nil {
-		t.Fatalf("failed to seed flag: %v", err)
-	}
-
 	assertStatus := func(t *testing.T, rr *httptest.ResponseRecorder, status int) {
 		t.Helper()
 		if rr.Code != status {
@@ -37,6 +31,11 @@ func TestRoutesRegistered(t *testing.T) {
 	}
 
 	t.Run("flag_get", func(t *testing.T) {
+		api := NewAPI()
+		if err := api.store.Put(Flag{Key: "foo", Enabled: true}); err != nil {
+			t.Fatalf("failed to seed flag: %v", err)
+		}
+
 		req := httptest.NewRequest(http.MethodGet, "/flags/foo", nil)
 		rr := httptest.NewRecorder()
 		api.routes().ServeHTTP(rr, req)
@@ -50,8 +49,30 @@ func TestRoutesRegistered(t *testing.T) {
 		}
 	})
 
+	t.Run("flag_delete", func(t *testing.T) {
+		api := NewAPI()
+		if err := api.store.Put(Flag{Key: "foo", Enabled: true}); err != nil {
+			t.Fatalf("failed to seed flag: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodDelete, "/flags/foo", nil)
+		rr := httptest.NewRecorder()
+		api.routes().ServeHTTP(rr, req)
+		assertStatus(t, rr, http.StatusNoContent)
+
+		req = httptest.NewRequest(http.MethodGet, "/flags/foo", nil)
+		rr = httptest.NewRecorder()
+		api.routes().ServeHTTP(rr, req)
+		assertError(t, rr, http.StatusNotFound, "flag not found")
+	})
+
 	t.Run("flag_put", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPut, "/flags/foo", strings.NewReader(`{"enabled":false,"rollout_percent":0}`))
+		api := NewAPI()
+		if err := api.store.Put(Flag{Key: "foo", Enabled: true}); err != nil {
+			t.Fatalf("failed to seed flag: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "/flags/foo", strings.NewReader(`{"enabled":false}`))
 		rr := httptest.NewRecorder()
 		api.routes().ServeHTTP(rr, req)
 		assertStatus(t, rr, http.StatusOK)
@@ -65,6 +86,11 @@ func TestRoutesRegistered(t *testing.T) {
 	})
 
 	t.Run("flag_evaluate", func(t *testing.T) {
+		api := NewAPI()
+		if err := api.store.Put(Flag{Key: "foo", Enabled: true, RolloutPercent: 100}); err != nil {
+			t.Fatalf("failed to seed flag: %v", err)
+		}
+
 		req := httptest.NewRequest(http.MethodGet, "/flags/foo/evaluate?user=42", nil)
 		rr := httptest.NewRecorder()
 		api.routes().ServeHTTP(rr, req)
@@ -73,24 +99,14 @@ func TestRoutesRegistered(t *testing.T) {
 		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 			t.Fatalf("invalid json: %v", err)
 		}
-		if _, ok := body["enabled"]; !ok {
-			t.Fatalf("expected enabled field in response, got %s", rr.Body.String())
+		if enabled, ok := body["enabled"]; !ok || !enabled {
+			t.Fatalf("expected enabled=true, got %s", rr.Body.String())
 		}
 	})
 
-	t.Run("flag_delete", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/flags/foo", nil)
-		rr := httptest.NewRecorder()
-		api.routes().ServeHTTP(rr, req)
-		assertStatus(t, rr, http.StatusNoContent)
-
-		req = httptest.NewRequest(http.MethodGet, "/flags/foo", nil)
-		rr = httptest.NewRecorder()
-		api.routes().ServeHTTP(rr, req)
-		assertError(t, rr, http.StatusNotFound, "flag not found")
-	})
-
 	t.Run("catchall_not_found", func(t *testing.T) {
+		api := NewAPI()
+
 		req := httptest.NewRequest(http.MethodGet, "/does-not-exist", nil)
 		rr := httptest.NewRecorder()
 		api.routes().ServeHTTP(rr, req)
