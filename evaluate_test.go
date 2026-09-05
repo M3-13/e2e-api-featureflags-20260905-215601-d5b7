@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,43 @@ func evaluate(t *testing.T, api *API, path string) (int, map[string]bool) {
 		return rr.Code, nil
 	}
 	return rr.Code, body
+}
+
+func TestEvaluateUserTooLong(t *testing.T) {
+	api := NewAPI()
+	if err := api.store.Put(Flag{Key: "k", Enabled: true, RolloutPercent: 50}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	longUser := strings.Repeat("a", 257)
+	req := httptest.NewRequest(http.MethodGet, "/flags/k/evaluate?user="+longUser, nil)
+	rr := httptest.NewRecorder()
+	api.routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("expected JSON error body, got %q: %v", rr.Body.String(), err)
+	}
+	if body["error"] != "user must be at most 256 characters" {
+		t.Fatalf("unexpected error message: %v", body)
+	}
+}
+
+func TestEvaluateUserAtLimit(t *testing.T) {
+	api := NewAPI()
+	if err := api.store.Put(Flag{Key: "k", Enabled: true, RolloutPercent: 50}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	user := strings.Repeat("a", 256)
+	status, _ := evaluate(t, api, "/flags/k/evaluate?user="+user)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200 for 256-char user, got %d", status)
+	}
 }
 
 func TestEvaluateMissingUser(t *testing.T) {

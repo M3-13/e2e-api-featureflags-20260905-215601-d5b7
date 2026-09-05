@@ -13,10 +13,16 @@ func stableHash(key, user string) uint64 {
 	return h.Sum64()
 }
 
+const maxUserLength = 256
+
 func (a *API) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 	user := r.URL.Query().Get("user")
 	if user == "" {
 		writeError(w, http.StatusBadRequest, "user is required")
+		return
+	}
+	if len(user) > maxUserLength {
+		writeError(w, http.StatusBadRequest, "user must be at most 256 characters")
 		return
 	}
 
