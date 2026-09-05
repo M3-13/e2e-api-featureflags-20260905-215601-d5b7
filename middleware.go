@@ -45,8 +45,9 @@ func withLogging(next http.Handler) http.Handler {
 			if p := recover(); p != nil {
 				rec.status = http.StatusInternalServerError
 				writeError(rec, http.StatusInternalServerError, "internal server error")
-				// Log the panic value internally only — never in the response body.
-				accessLogger.Printf("panic: %v", p)
+				// AC-22: the access log must contain only method, path, status
+				// and duration, so the panic value is deliberately not logged.
+				_ = p
 			}
 
 			// The normal access log line is always written, including on panic

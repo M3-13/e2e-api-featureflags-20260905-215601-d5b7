@@ -113,8 +113,8 @@ func TestWithLoggingRecoversPanic(t *testing.T) {
 	}
 
 	logLine := buf.String()
-	if !strings.Contains(logLine, "panic:") {
-		t.Fatalf("expected 'panic:' in the log, got %q", logLine)
+	if strings.Contains(logLine, "boom") {
+		t.Fatalf("panic value must not appear in the log, got %q", logLine)
 	}
 	if !strings.Contains(logLine, "500") {
 		t.Fatalf("expected status 500 in the log line, got %q", logLine)
