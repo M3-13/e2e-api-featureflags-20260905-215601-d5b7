@@ -138,6 +138,29 @@ func TestCreateFlagInvalidJSON(t *testing.T) {
 	assertErrorJSON(t, rr)
 }
 
+func TestCreateFlagDescriptionTooLong(t *testing.T) {
+	api := NewAPI()
+	body := []byte(`{"key":"long-desc","enabled":true,"description":"` + strings.Repeat("a", maxDescriptionLength+1) + `"}`)
+	rr := doRequest(t, api, http.MethodPost, "/flags", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+	assertErrorJSON(t, rr)
+}
+
+func TestUpdateFlagDescriptionTooLong(t *testing.T) {
+	api := NewAPI()
+	if rr := doRequest(t, api, http.MethodPost, "/flags", []byte(`{"key":"long-upd","enabled":true}`)); rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rr.Code)
+	}
+	body := []byte(`{"enabled":true,"description":"` + strings.Repeat("a", maxDescriptionLength+1) + `"}`)
+	rr := doRequest(t, api, http.MethodPut, "/flags/long-upd", body)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+	assertErrorJSON(t, rr)
+}
+
 func TestCreateFlagTooLarge(t *testing.T) {
 	api := NewAPI()
 	big := []byte(`{"key":"` + strings.Repeat("a", maxBodyBytes) + `","enabled":true}`)
