@@ -4,7 +4,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
+
+var version = "dev"
 
 type API struct {
 	store *Store
@@ -38,11 +41,11 @@ func (a *API) routes() http.Handler {
 
 	mux.HandleFunc("/", notFound)
 
-	return withLogging(mux)
+	return withLogging(withAuth(mux))
 }
 
 func (a *API) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": version})
 }
 
 func main() {
@@ -53,11 +56,26 @@ func main() {
 		port = "8080"
 	}
 
-	server := &http.Server{
-		Addr:    ":" + port,
-		Handler: api.routes(),
+	bindAddr := os.Getenv("BIND_ADDR")
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
 	}
 
-	log.Printf("featureflags service listening on :%s", port)
+	server := &http.Server{
+		Addr:              bindAddr + ":" + port,
+		Handler:           api.routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	log.Printf("featureflags service listening on %s", server.Addr)
+
+	cert := os.Getenv("TLS_CERT")
+	key := os.Getenv("TLS_KEY")
+	if cert != "" && key != "" {
+		log.Fatal(server.ListenAndServeTLS(cert, key))
+	}
 	log.Fatal(server.ListenAndServe())
 }

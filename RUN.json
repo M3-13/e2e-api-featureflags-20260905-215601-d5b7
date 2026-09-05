@@ -11,7 +11,11 @@
       "port_env": "PORT",
       "health": { "path": "/healthz", "expect_status": [200] },
       "env": {
-        "PORT": { "dev": "8080" }
+        "PORT": { "dev": "8080" },
+        "BIND_ADDR": { "dev": "127.0.0.1" },
+        "API_TOKEN": { "external": true, "degraded_without": "auth disabled; /flags accessible without a token" },
+        "TLS_CERT": { "external": true, "degraded_without": "serves plain HTTP" },
+        "TLS_KEY": { "external": true, "degraded_without": "serves plain HTTP" }
       }
     }
   ]

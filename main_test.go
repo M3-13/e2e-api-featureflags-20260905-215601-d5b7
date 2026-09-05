@@ -26,6 +26,25 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestHealthzIncludesVersion(t *testing.T) {
+	api := NewAPI()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+
+	api.routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if body["version"] == "" {
+		t.Fatalf("expected non-empty version field, got %q", body["version"])
+	}
+}
+
 func TestNotFound(t *testing.T) {
 	api := NewAPI()
 	req := httptest.NewRequest(http.MethodGet, "/does-not-exist", nil)
