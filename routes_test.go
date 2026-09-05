@@ -11,7 +11,7 @@ import (
 func TestRoutesRegistered(t *testing.T) {
 	api := NewAPI()
 
-	assertHandlerError := func(t *testing.T, rr *httptest.ResponseRecorder, status int, wantMsg string) {
+	assertError := func(t *testing.T, rr *httptest.ResponseRecorder, status int, wantMsg string) {
 		t.Helper()
 		if rr.Code != status {
 			t.Fatalf("expected %d, got %d: %s", status, rr.Code, rr.Body.String())
@@ -29,27 +29,34 @@ func TestRoutesRegistered(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/flags/foo", nil)
 		rr := httptest.NewRecorder()
 		api.routes().ServeHTTP(rr, req)
-		assertHandlerError(t, rr, http.StatusNotFound, "flag not found")
+		assertError(t, rr, http.StatusNotFound, "flag not found")
 	})
 
 	t.Run("flag_put", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/flags/foo", strings.NewReader(`{"enabled":true}`))
 		rr := httptest.NewRecorder()
 		api.routes().ServeHTTP(rr, req)
-		assertHandlerError(t, rr, http.StatusNotFound, "flag not found")
+		assertError(t, rr, http.StatusNotFound, "flag not found")
 	})
 
 	t.Run("flag_delete", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/flags/foo", nil)
 		rr := httptest.NewRecorder()
 		api.routes().ServeHTTP(rr, req)
-		assertHandlerError(t, rr, http.StatusNotFound, "flag not found")
+		assertError(t, rr, http.StatusNotFound, "flag not found")
 	})
 
 	t.Run("flag_evaluate", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/flags/foo/evaluate?user=42", nil)
 		rr := httptest.NewRecorder()
 		api.routes().ServeHTTP(rr, req)
-		assertHandlerError(t, rr, http.StatusNotFound, "flag not found")
+		assertError(t, rr, http.StatusNotFound, "flag not found")
+	})
+
+	t.Run("catchall_not_found", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/does-not-exist", nil)
+		rr := httptest.NewRecorder()
+		api.routes().ServeHTTP(rr, req)
+		assertError(t, rr, http.StatusNotFound, "not found")
 	})
 }
