@@ -24,14 +24,38 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// sanitizePath replaces every control character (byte < 32) and DEL (127)
+// with '?', so raw control bytes never reach the access log.
+func sanitizePath(path string) string {
+	b := []byte(path)
+	for i, c := range b {
+		if c < 32 || c == 127 {
+			b[i] = '?'
+		}
+	}
+	return string(b)
+}
+
 func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		duration := time.Since(start)
 
-		// Log only the method, r.URL.Path (never the query string) and status.
-		accessLogger.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, duration)
+		defer func() {
+			if p := recover(); p != nil {
+				rec.status = http.StatusInternalServerError
+				writeError(rec, http.StatusInternalServerError, "internal server error")
+				// AC-22: the access log must contain only method, path, status
+				// and duration, so the panic value is deliberately not logged.
+				_ = p
+			}
+
+			// The normal access log line is always written, including on panic
+			// (with the status forced to 500 above).
+			duration := time.Since(start)
+			accessLogger.Printf("%s %s %d %s", r.Method, sanitizePath(r.URL.Path), rec.status, duration)
+		}()
+
+		next.ServeHTTP(rec, r)
 	})
 }
