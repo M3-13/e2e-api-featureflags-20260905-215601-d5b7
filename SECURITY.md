@@ -1,76 +1,92 @@
-VERDICT: BLOCKED
+VERDICT: CHANGES_REQUESTED
+
+## Scanner-Abdeckung
+Für den Projekttyp `go-backend` wurde kein automatisierter Security-Scanner ausgeführt. Es liegen daher keine Scanner-Befunde vor. Die folgende Bewertung basiert ausschließlich auf manueller Quellcode-Analyse.
 
 ## Sicherheitsbericht
 
-### 1. Fehlende Authentifizierung / Autorisierung auf allen Flag-Endpunkten
-- **Schweregrad:** Hoch
-- **Betroffene Stelle:** `main.go` (`routes()` und `main()`), `handlers.go` (alle `/flags`-Handler), `evaluate.go`
-- **Beschreibung:** Die REST-API besitzt keinerlei Authentifizierung oder Autorisierung. Jeder, der den Port erreichen kann, kann uneingeschränkt Flags anlegen, lesen, ändern und löschen sowie Rollout-Entscheidungen beeinflussen. Da Feature-Flags Produktionsverhalten steuern, ist der ungeschützte Verwaltungszugriff kritisch. Es handelt sich nicht um einen klassischen „Auth-Bypass“, sondern um vollständig fehlende Zugriffskontrolle.
-- **Konkrete Korrektur:** Vor alle `/flags`-Routen eine Authentifizierungs-/Autorisierungs-Middleware schalten, z. B. ein konstanter Bearer-Token-/API-Key-Vergleich aus der Umgebungsvariable `API_TOKEN`.  
-  Beispiel:
+### 1. Mittel — Fehlende/zwingend optionale Authentifizierung bei unsicherer Netzwerkbindung
+**Betroffene Stellen:** `auth.go`, `main.go`
+
+Der Dienst startet standardmäßig mit `API_TOKEN=""`, wodurch sämtliche `/flags`-Routen ohne Authentifizierung erreichbar sind. Standardmäßig wird zwar an `127.0.0.1` gebunden, aber sobald `BIND_ADDR=0.0.0.0` gesetzt wird, sind unauthentifiziertes Erstellen, Ändern und Löschen von Feature-Flags aus dem Netz möglich. Das kann zu Manipulation des Rollout-Verhaltens und unkontrolliertem Speicherwachstum führen.
+
+**Fix:**
+- Beim Start prüfen: Wird an eine Nicht-Loopback-Adresse gebunden und ist `API_TOKEN` leer, entweder mit klarer Fehlermeldung verweigern oder mindestens eine deutliche Warnung loggen.
+- Beispiel in `main.go`:
   ```go
-  func withAuth(next http.Handler) http.Handler {
-      expected := os.Getenv("API_TOKEN")
-      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-          if expected == "" || !hmac.Equal([]byte(r.Header.Get("Authorization")), []byte("Bearer "+expected)) {
-              writeError(w, http.StatusUnauthorized, "unauthorized")
-              return
-          }
-          next.ServeHTTP(w, r)
-      })
+  token := os.Getenv("API_TOKEN")
+  if token == "" && !isLoopback(bindAddr) {
+      log.Fatal("API_TOKEN must be set when binding to a non-loopback address")
   }
   ```
-  Alternativ den Dienst ausschließlich hinter einem authentifizierenden Reverse Proxy / API-Gateway betreiben. Die Tests müssen entsprechend einen `Authorization`-Header setzen oder die Middleware gezielt isoliert testen.
+- Zusätzlich in der Betriebsdokumentation festhalten, dass Production-Deployments immer `API_TOKEN` und TLS setzen müssen.
 
-### 2. HTTP-Server ohne Timeouts
-- **Schweregrad:** Mittel
-- **Betroffene Stelle:** `main.go` (`server := &http.Server{Addr: ":" + port, Handler: api.routes()}`)
-- **Beschreibung:** Es sind keine `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout` oder `MaxHeaderBytes` gesetzt. Der Server ist dadurch anfällig für Slowloris- und Ressourcenerschöpfungsangriffe.
-- **Konkrete Korrektur:** Timeouts explizit setzen, z. B.:
-  ```go
-  server := &http.Server{
-      Addr:              ":" + port,
-      Handler:           api.routes(),
-      ReadHeaderTimeout: 5 * time.Second,
-      ReadTimeout:       10 * time.Second,
-      WriteTimeout:      10 * time.Second,
-      IdleTimeout:       60 * time.Second,
-  }
-  ```
-  Dafür `time` importieren.
+### 2. Mittel — Unbegrenzter In-Memory-Store und fehlende Ratenbegrenzung (Speicher-DoS)
+**Betroffene Stellen:** `store.go`, `handlers.go`
 
-### 3. Standardmäßiges Binden an alle Netzwerkschnittstellen ohne TLS
-- **Schweregrad:** Mittel
-- **Betroffene Stelle:** `main.go` (`Addr: ":" + port`)
-- **Beschreibung:** Der Dienst lauscht standardmäßig auf `0.0.0.0` und ist damit potenziell aus dem gesamten Netzwerk erreichbar. Es ist keine TLS-Absicherung vorgesehen. Flag-Metadaten und Steuerentscheidungen werden unverschlüsselt übertragen.
-- **Konkrete Korrektur:** Standardmäßig nur auf `127.0.0.1` binden oder die Bind-Adresse explizit konfigurierbar machen:
-  ```go
-  bindAddr := os.Getenv("BIND_ADDR")
-  if bindAddr == "" {
-      bindAddr = "127.0.0.1"
-  }
-  server := &http.Server{
-      Addr: bindAddr + ":" + port,
-      // ...
-  }
-  ```
-  In Produktion zusätzlich TLS (z. B. über `ListenAndServeTLS`) oder einen TLS-terminierenden Reverse Proxy verwenden.
+Es gibt keine Begrenzung für die Anzahl der angelegten Flags. Jeder authentifizierte Client – bzw. bei leerem `API_TOKEN` jeder erreichbare Client – kann beliebig viele Flags mit bis zu 1 MiB großem Request-Body anlegen. Zwar ist der einzelne Body auf 1 MiB begrenzt, der Gesamtspeicher des Stores wächst jedoch unbegrenzt.
 
-### 4. Unbegrenzte Länge des `user`-Query-Parameters
-- **Schweregrad:** Niedrig
-- **Betroffene Stelle:** `evaluate.go` (`handleEvaluate`)
-- **Beschreibung:** Der `user`-Wert aus `GET /flags/{key}/evaluate?user=...` hat keine applikationsseitige Längenbegrenzung. Die FNV-1a-Hash-Berechnung und Query-Verarbeitung sind linear zur Eingabelänge; sehr lange Werte können unnötig CPU verbrauchen. Der Wert wird zwar korrekt nicht geloggt oder gespeichert, die Eingabeverarbeitung ist jedoch nicht begrenzt.
-- **Konkrete Korrektur:** Maximallänge prüfen, z. B.:
-  ```go
-  const maxUserLength = 256
-  if len(user) > maxUserLength {
-      writeError(w, http.StatusBadRequest, "user must be at most 256 characters")
-      return
-  }
-  ```
+**Fix:**
+- Maximale Anzahl Flags einführen, z. B. über Umgebungsvariable `MAX_FLAGS` mit einem konservativen Standardwert (etwa 10.000).
+- Beim Überschreiten konsistent mit `429 Too Many Requests` oder `507 Insufficient Storage` als JSON-Fehlerobjekt antworten, ohne Flag zu speichern.
+- Optional eine einfache Rate-Limit-Middleware vor die schreibenden Routen schalten.
+- `maxKeyLength` einführen (z. B. 256) und in `handleCreateFlag` prüfen, um einzelne exzessive Keys zu verhindern.
 
-## Zusammenfassung
-- **Positiv:** Keine Secrets im Code. JSON-Parser mit 1-MiB-Body-Limit. Einheitliche JSON-Fehlerantworten. Kein Query-String-Logging. Keine externen dependencies mit bekannten Schwachstellen. RWMutex-Race-Schutz vorhanden.
-- **Kritisch:** Fehlende Authentifizierung/Autorisierung auf allen mutierenden und lesenden Flag-Endpunkten. Dies ist der Grund für den Blocker.
+### 3. Niedrig — Auth-Präfix zu breit
+**Betroffene Stelle:** `auth.go`
 
-Der Service muss vor einem produktiven Einsatz zwingend um eine Zugriffskontrolle und sichere Server-Konfiguration ergänzt werden.
+`strings.HasPrefix(r.URL.Path, "/flags")` schützt nicht nur `/flags` und `/flags/...`, sondern auch beliebige andere Pfade, die mit `/flags` beginnen, etwa `/flagship`. Das ist derzeit kein direkter Exploit, aber eine unpräzise Zugriffsregel, die bei künftigen Routen zu unerwartetem Authentifizierungszwang führen kann.
+
+**Fix:**
+```go
+if r.URL.Path != "/flags" && !strings.HasPrefix(r.URL.Path, "/flags/") {
+    next.ServeHTTP(w, r)
+    return
+}
+```
+
+### 4. Niedrig — JSON-Decoder akzeptiert angehängte Zusatzdaten
+**Betroffene Stelle:** `handlers.go`, Funktion `decodeBody`
+
+`json.NewDecoder(r.Body).Decode(dst)` liest nur das erste JSON-Dokument. Ein Body wie
+`{"key":"a","enabled":true}{"key":"b","enabled":true}` oder angehängter Nicht-JSON-Müll wird nach dem ersten Wert nicht geprüft. Das öffnet keine direkte RCE-Lücke, umgeht aber die beabsichtigte strikte Body-Validierung.
+
+**Fix:**
+Nach der ersten Dekodierung prüfen, dass kein weiteres Token folgt:
+```go
+if dec.Decode(&struct{}{}) != io.EOF {
+    writeError(w, http.StatusBadRequest, "invalid request body")
+    return false
+}
+```
+`io` ist zusätzlich zu importieren.
+
+### 5. Niedrig — Fehlende Transport-/Response-Härtung
+**Betroffene Stellen:** `response.go`, `main.go`
+
+- `writeJSON` setzt keinen `X-Content-Type-Options: nosniff`-Header, obwohl alle Antworten als `application/json` ausgeliefert werden.
+- TLS ist optional; im Standardbetrieb läuft die API unverschlüsselt über HTTP. Die API überträgt im authentifizierten Betrieb den Bearer-Token im Klartext, sofern kein TLS aktiviert ist.
+
+**Fix:**
+```go
+w.Header().Set("Content-Type", "application/json")
+w.Header().Set("X-Content-Type-Options", "nosniff")
+```
+Für Produktion die Nutzung von `TLS_CERT`/`TLS_KEY` verbindlich dokumentieren bzw. beim Binden an Nicht-Loopback-Adressen TLS erzwingen.
+
+### 6. Niedrig — Key-Validierung zu schwach
+**Betroffene Stelle:** `handlers.go`, `handleCreateFlag`
+
+Der Flag-Key wird nur auf leer geprüft. Keys mit `/`, Steuerzeichen oder sehr großer Länge können angelegt werden. Ein Key mit `/` ist über die späteren Route-Muster `GET /flags/{key}` nicht mehr adressierbar, was zu einem funktionalen Defekt führt und die Wartung erschwert.
+
+**Fix:**
+- Key zusätzlich auf eine URL-sichere Zeichenklasse beschränken, z. B. `[A-Za-z0-9._-]{1,256}`.
+- Die Validierung zentral vor dem Schreiben im Handler durchführen, sodass ungültige Keys mit `400` und einheitlichem JSON-Fehlerobjekt abgewiesen werden.
+
+## Nicht beanstandet
+- Keine hartkodierten Secrets oder Token im Produktivcode.
+- Keine SQL-, Command- oder Pfad-Injection erkennbar.
+- `http.MaxBytesReader` begrenzt Request-Bodies korrekt auf 1 MiB und liefert 413.
+- Evaluierung behandelt `user` ausschließlich im Request; der Wert wird nicht gespeichert.
+- Logging protokolliert nur Methode, `r.URL.Path`, Status und Dauer; Query-Strings und User-IDs werden nicht geloggt.
+- Panic-Recovery verhindert Stacktrace-Leaks in Antworten.
