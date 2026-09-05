@@ -6,7 +6,10 @@ import (
 	"net/http"
 )
 
-const maxBodyBytes = 1 << 20 // 1 MiB
+const (
+	maxBodyBytes         = 1 << 20 // 1 MiB
+	maxDescriptionLength = 1024
+)
 
 type createFlagRequest struct {
 	Key            string `json:"key"`
@@ -48,6 +51,10 @@ func (a *API) handleCreateFlag(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Enabled == nil {
 		writeError(w, http.StatusBadRequest, "enabled is required")
+		return
+	}
+	if len(req.Description) > maxDescriptionLength {
+		writeError(w, http.StatusBadRequest, "description must be at most 1024 characters")
 		return
 	}
 	if req.RolloutPercent < 0 || req.RolloutPercent > 100 {
@@ -97,6 +104,10 @@ func (a *API) handleUpdateFlag(w http.ResponseWriter, r *http.Request) {
 
 	if req.Enabled == nil {
 		writeError(w, http.StatusBadRequest, "enabled is required")
+		return
+	}
+	if len(req.Description) > maxDescriptionLength {
+		writeError(w, http.StatusBadRequest, "description must be at most 1024 characters")
 		return
 	}
 	if req.RolloutPercent < 0 || req.RolloutPercent > 100 {
